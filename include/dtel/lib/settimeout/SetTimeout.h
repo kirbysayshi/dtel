@@ -98,7 +98,9 @@ public:
 		else
 			newid = event->id();
 		_events.emplace_back(std::chrono::steady_clock::now() + event->delay(), event);
-		_events.sort([](const auto &first, const auto &second) {
+		_events.sort([](
+					const std::pair<std::chrono::steady_clock::time_point, TimeoutEvent::TPtr> &first,
+					const std::pair<std::chrono::steady_clock::time_point, TimeoutEvent::TPtr> &second) {
 			return first.first < second.first;
 		});
 		// wake the event loop to process the possibly new timeout

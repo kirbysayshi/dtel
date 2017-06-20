@@ -79,7 +79,9 @@ public:
 	{
 		std::lock_guard<std::recursive_mutex> lock(_mutex);
 		_looprunners.emplace_back(priority, looprunner);
-		_looprunners.sort([](const auto &first, const auto &second) {
+		_looprunners.sort([](
+							const std::pair<int, LoopRunner::Ptr> &first,
+							const std::pair<int, LoopRunner::Ptr> &second) {
 			return first.first < second.first;
 		});
 	}
@@ -165,6 +167,63 @@ public:
 
 		std::unique_lock<std::recursive_mutex> lock(_mutex);
 		_events.clear();
+	}
+
+	/**
+	 * "Pump" the EventLoop by processing queued events, stopping once the
+	 * queue is empty.
+	 */
+	void pump() {
+		auto now = std::chrono::steady_clock::now();
+		// wait 2000 ms by default
+		auto timeout(now + std::chrono::milliseconds(2000));
+
+		// loop runners
+		{
+			std::unique_lock<std::recursive_mutex> lock(_mutex);
+			for (auto lr : _looprunners) {
+				auto newtimeout = lr.second->looped(_ctx);
+				if (newtimeout && *newtimeout < timeout)
+					timeout = *newtimeout;
+			}
+		}
+
+		// run events
+		while (true) {
+			dtel::Event::Ptr event;
+
+			{
+				// retrieve the first event
+				std::unique_lock<std::recursive_mutex> lock(_mutex);
+				if (!_events.empty()) {
+					event = _events.front();
+					_events.pop_front();
+				}
+			}
+
+			if (event) {
+				dtel::ResetStackOnScopeExit r(_ctx);
+
+				// call event
+				try {
+					event->apply(_ctx);
+				}
+				catch (std::exception &e) {
+					if (!processException(e))
+						throw;
+				}
+
+				// release event
+				try {
+					event->release(_ctx);
+				}
+				catch (std::exception &e) {
+					if (!processException(e))
+						throw;
+				}
+			} else
+				break;
+		}
 	}
 
 	/**
